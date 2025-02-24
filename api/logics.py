@@ -7,7 +7,7 @@ from django.db.models import Q, Sum
 from django.utils import timezone
 
 from api.lightning.node import LNNode
-from api.models import Currency, LNPayment, MarketTick, OnchainPayment, Order
+from api.models import Currency, LNPayment, MarketTick, OnchainPayment, Order, TakeOrder
 from api.tasks import send_devfund_donation, send_notification, nostr_send_order_event
 from api.utils import get_minning_fee, validate_onchain_address, location_country
 from chat.models import Message
@@ -41,7 +41,6 @@ class Logics:
             Order.Status.WFB,
             Order.Status.PUB,
             Order.Status.PAU,
-            Order.Status.TAK,
             Order.Status.WF2,
             Order.Status.WFE,
             Order.Status.WFI,
@@ -51,20 +50,32 @@ class Logics:
             Order.Status.WFR,
         ]
         """Checks if the user is already partipant of an active order"""
-        queryset = Order.objects.filter(maker=user, status__in=active_order_status)
-        if queryset.exists():
+        queryset_maker = Order.objects.filter(
+            maker=user, status__in=active_order_status
+        )
+        if queryset_maker.exists():
             return (
                 False,
                 {"bad_request": "You are already maker of an active order"},
-                queryset[0],
+                queryset_maker[0],
             )
 
-        queryset = Order.objects.filter(taker=user, status__in=active_order_status)
-        if queryset.exists():
+        queryset_taker = Order.objects.filter(
+            taker=user, status__in=active_order_status
+        )
+        if queryset_taker.exists():
             return (
                 False,
                 {"bad_request": "You are already taker of an active order"},
-                queryset[0],
+                queryset_taker[0],
+            )
+
+        queryset_take_order = TakeOrder.objects.filter(taker=user)
+        if not queryset_take_order.exists():
+            return (
+                False,
+                {"bad_request": "You are already taker of an active order"},
+                queryset_take_order[0],
             )
 
         # Edge case when the user is in an order that is failing payment and he is the buyer
@@ -177,20 +188,16 @@ class Logics:
                 f"You need to wait {time_out} seconds to take an order",
             }
         else:
-            if order.has_range:
-                order.amount = amount
-            order.taker = user
-            order.update_status(Order.Status.TAK)
-            order.expires_at = timezone.now() + timedelta(
-                seconds=order.t_to_expire(Order.Status.TAK)
+            take_order = TakeOrder.objects.create(
+                taker=user,
+                order=order,
+                amount=amount,
+                expires_at=timezone.now()
+                + timedelta(seconds=order.t_to_expire(Order.Status.TAK)),
             )
-            order.save(update_fields=["amount", "taker", "expires_at"])
 
-            nostr_send_order_event.delay(order_id=order.id)
+            order.log(take_order)
 
-            order.log(
-                f"Taken by Robot({user.robot.id},{user.username}) for {order.amount} fiat units"
-            )
             return True, None
 
     def is_buyer(order, user):
@@ -245,13 +252,25 @@ class Logics:
         return price, premium
 
     @classmethod
+    def take_order_expires(cls, take_order):
+        """General case when taker time runs out."""
+        if take_order.expires_at < timezone.now():
+            cls.cancel_bond(take_order.taker_bond)
+
+            take_order.order.log("Take order expired while waiting for taker bond")
+            take_order.order.log("Taker bond was cancelled")
+
+            return True
+        else:
+            return False
+
+    @classmethod
     def order_expires(cls, order):
         """General cases when time runs out."""
 
         # Do not change order status if an order in any with
         # any of these status is sent to expire here
         does_not_expire = [
-            Order.Status.UCA,
             Order.Status.EXP,
             Order.Status.TLD,
             Order.Status.DIS,
@@ -289,17 +308,6 @@ class Logics:
 
             order.log("Order expired while public or paused")
             order.log("Maker bond was <b>unlocked</b>")
-
-            return True
-
-        elif order.status == Order.Status.TAK:
-            cls.cancel_bond(order.taker_bond)
-            cls.kick_taker(order)
-
-            nostr_send_order_event.delay(order_id=order.id)
-
-            order.log("Order expired while waiting for taker bond")
-            order.log("Taker bond was cancelled")
 
             return True
 
@@ -412,23 +420,6 @@ class Logics:
                 "Order expired during chat and a dispute was opened automatically"
             )
             return True
-
-    @classmethod
-    def kick_taker(cls, order):
-        """The taker did not lock the taker_bond. Now he has to go"""
-        # Add a time out to the taker
-        if order.taker:
-            robot = order.taker.robot
-            robot.penalty_expiration = timezone.now() + timedelta(
-                seconds=PENALTY_TIMEOUT
-            )
-            robot.save(update_fields=["penalty_expiration"])
-
-        # Make order public again
-        cls.publish_order(order)
-
-        order.log("Taker was kicked out of the order")
-        return True
 
     @classmethod
     def automatic_dispute_resolution(cls, order):
@@ -1011,6 +1002,8 @@ class Logics:
             Order.Status.MLD,
         ]
 
+        take_order_query_set = TakeOrder.objects.filter(taker=user, order=order)
+
         if order.status in do_not_cancel:
             return False, {"bad_request": "You cannot cancel this order"}
 
@@ -1038,6 +1031,13 @@ class Logics:
         ):
             # Return the maker bond (Maker gets returned the bond for cancelling public order)
             if cls.return_bond(order.maker_bond):
+                queryset = TakeOrder.objects.filter(order=order)
+                for idx, take_order in enumerate(queryset):
+                    cls.cancel_bond(take_order.taker_bond)
+                    order.log(
+                        f"Taker bond from {take_order.taker.username} was <b>cancelled</b>"
+                    )
+
                 order.update_status(Order.Status.UCA)
                 send_notification.delay(
                     order_id=order.id, message="public_order_cancelled"
@@ -1049,43 +1049,7 @@ class Logics:
                 nostr_send_order_event.delay(order_id=order.id)
 
                 return True, None
-
-        # 2.b) When maker cancels after bond and before taker bond is locked
-        #
-        # The order dissapears from book and goes to cancelled.
-        # The bond maker bond is returned.
-        elif order.status == Order.Status.TAK and order.maker == user:
-            # Return the maker bond (Maker gets returned the bond for cancelling public order)
-            if cls.return_bond(order.maker_bond):
-                cls.cancel_bond(order.taker_bond)
-                order.update_status(Order.Status.UCA)
-                send_notification.delay(
-                    order_id=order.id, message="public_order_cancelled"
-                )
-
-                order.log("Order cancelled by maker before the taker locked the bond")
-                order.log("Maker bond was <b>unlocked</b>")
-                order.log("Taker bond was <b>cancelled</b>")
-
-                nostr_send_order_event.delay(order_id=order.id)
-
-                return True, None
-
-        # 3) When taker cancels before bond
-        # The order goes back to the book as public.
-        # LNPayment "order.taker_bond" is deleted()
-        elif order.status == Order.Status.TAK and order.taker == user:
-            # adds a timeout penalty
-            cls.cancel_bond(order.taker_bond)
-            cls.kick_taker(order)
-
-            order.log("Taker cancelled before locking the bond")
-
-            nostr_send_order_event.delay(order_id=order.id)
-
-            return True, None
-
-        # 4) When taker or maker cancel after bond (before escrow)
+        # 3) When taker or maker cancel after bond (before escrow)
         #
         # The order goes into cancelled status if maker cancels.
         # The order goes into the public book if taker cancels.
@@ -1116,7 +1080,7 @@ class Logics:
 
                 return True, None
 
-        # 4.b) When taker cancel after bond (before escrow)
+        # 3.b) When taker cancel after bond (before escrow)
         # The order into cancelled status if mtker cancels.
         elif (
             order.status in [Order.Status.WF2, Order.Status.WFE] and order.taker == user
@@ -1140,7 +1104,7 @@ class Logics:
 
                 return True, None
 
-        # 5) When trade collateral has been posted (after escrow)
+        # 4) When trade collateral has been posted (after escrow)
         #
         # Always goes to CCA status. Collaboration is needed.
         # When a user asks for cancel, 'order.m/t/aker_asked_cancel' goes True.
@@ -1185,7 +1149,17 @@ class Logics:
                     f"Maker Robot({user.robot.id},{user.username}) asked for collaborative cancellation"
                 )
                 return True, None
+        # 5) When taker cancels before bond
+        # TakeOrder is deleted()
+        # LNPayment "order.taker_bond" is deleted()
+        elif take_order_query_set.exists():
+            take_order = take_order_query_set.first()
+            cls.cancel_bond(take_order.taker_bond)
+            take_order.delete()
 
+            order.log("Taker cancelled before locking the bond")
+
+            return True, None
         else:
             order.log(
                 f"Cancel request was sent by Robot({user.robot.id},{user.username}) on an invalid status {order.status}: <i>{Order.Status(order.status).label}</i>"
@@ -1336,13 +1310,18 @@ class Logics:
         }
 
     @classmethod
-    def finalize_contract(cls, order):
+    def finalize_contract(cls, take_order):
         """When the taker locks the taker_bond
         the contract is final"""
 
+        order = take_order.order
+        order.taker = take_order.taker
+        order.amount = take_order.amount
+        order.taker_bond = take_order.taker_bond
+
         # THE TRADE AMOUNT IS FINAL WITH THE CONFIRMATION OF THE TAKER BOND!
         # (This is the last update to "last_satoshis", it becomes the escrow amount next)
-        order.last_satoshis = cls.satoshis_now(order)
+        order.last_satoshis = cls.satoshis_now(take_order.order)
         order.last_satoshis_time = timezone.now()
 
         # With the bond confirmation the order is extended 'public_order_duration' hours
@@ -1352,6 +1331,9 @@ class Logics:
         order.status = Order.Status.WF2
         order.save(
             update_fields=[
+                "taker",
+                "amount",
+                "taker_bond",
                 "status",
                 "last_satoshis",
                 "last_satoshis_time",
@@ -1383,34 +1365,43 @@ class Logics:
         order.log(
             f"<b>Contract formalized.</b> Maker: Robot({order.maker.robot.id},{order.maker}). Taker: Robot({order.taker.robot.id},{order.taker}). API median price {order.currency.exchange_rate} {dict(Currency.currency_choices)[order.currency.currency]}/BTC. Premium is {order.premium}%. Contract size {order.last_satoshis} Sats"
         )
+
+        queryset = TakeOrder.objects.filter(order=order)
+        for idx, take_order in enumerate(queryset):
+            if take_order.id is not take_order.id:
+                cls.cancel_bond(take_order.taker_bond)
+                order.log(
+                    f"Taker bond from {take_order.taker.username} was <b>cancelled</b>"
+                )
+
         return True
 
     @classmethod
-    def gen_taker_hold_invoice(cls, order, user):
+    def gen_taker_hold_invoice(cls, take_order, user):
         # Do not gen and kick out the taker if order is older than expiry time
-        if order.expires_at < timezone.now():
-            cls.order_expires(order)
+        expired = cls.take_order_expires(take_order)
+        if expired:
             return False, {
                 "bad_request": "Invoice expired. You did not confirm taking the order in time."
             }
 
         # Do not gen if a taker invoice exist. Do not return if it is already locked. Return the old one if still waiting.
-        if order.taker_bond:
+        if take_order.taker_bond:
             return True, {
-                "bond_invoice": order.taker_bond.invoice,
-                "bond_satoshis": order.taker_bond.num_satoshis,
+                "bond_invoice": take_order.taker_bond.invoice,
+                "bond_satoshis": take_order.taker_bond.num_satoshis,
             }
 
         # If there was no taker_bond object yet, generates one
-        order.last_satoshis = cls.satoshis_now(order)
-        order.last_satoshis_time = timezone.now()
-        bond_satoshis = int(order.last_satoshis * order.bond_size / 100)
-        pos_text = "Buying" if cls.is_buyer(order, user) else "Selling"
+        take_order.last_satoshis = cls.satoshis_now(take_order.order)
+        take_order.last_satoshis_time = timezone.now()
+        bond_satoshis = int(take_order.last_satoshis * take_order.order.bond_size / 100)
+        pos_text = "Buying" if cls.is_buyer(take_order.order, user) else "Selling"
         if user.robot.wants_stealth:
-            description = f"{config("NODE_ALIAS")} - Payment reference: {order.reference}. This payment WILL FREEZE IN YOUR WALLET, check on RoboSats if the lock was successful. It will be unlocked (fail) unless you cheat or cancel unilaterally."
+            description = f"{config("NODE_ALIAS")} - Payment reference: {take_order.order.reference}. This payment WILL FREEZE IN YOUR WALLET, check on RoboSats if the lock was successful. It will be unlocked (fail) unless you cheat or cancel unilaterally."
         else:
             description = (
-                f"{config("NODE_ALIAS")} - Taking 'Order {order.id}' {pos_text} BTC for {str(float(order.amount)) + Currency.currency_dict[str(order.currency.currency)]}"
+                f"{config("NODE_ALIAS")} - Taking 'Order {take_order.order.id}' {pos_text} BTC for {str(float(take_order.amount)) + Currency.currency_dict[str(take_order.order.currency.currency)]}"
                 + " - Taker bond - This payment WILL FREEZE IN YOUR WALLET, check on RoboSats if the lock was successful. It will be unlocked (fail) unless you cheat or cancel unilaterally."
             )
 
@@ -1419,9 +1410,11 @@ class Logics:
             hold_payment = LNNode.gen_hold_invoice(
                 bond_satoshis,
                 description,
-                invoice_expiry=order.t_to_expire(Order.Status.TAK),
-                cltv_expiry_blocks=cls.compute_cltv_expiry_blocks(order, "taker_bond"),
-                order_id=order.id,
+                invoice_expiry=take_order.order.t_to_expire(Order.Status.TAK),
+                cltv_expiry_blocks=cls.compute_cltv_expiry_blocks(
+                    take_order.order, "taker_bond"
+                ),
+                order_id=take_order.order.id,
                 lnpayment_concept=LNPayment.Concepts.TAKEBOND.label,
                 time=int(timezone.now().timestamp()),
             )
@@ -1431,8 +1424,10 @@ class Logics:
                 return False, {
                     "bad_request": "The Lightning Network Daemon (LND) is down. Write in the Telegram group to make sure the staff is aware."
                 }
+            else:
+                print(str(e))
 
-        order.taker_bond = LNPayment.objects.create(
+        take_order.taker_bond = LNPayment.objects.create(
             concept=LNPayment.Concepts.TAKEBOND,
             type=LNPayment.Types.HOLD,
             sender=user,
@@ -1448,20 +1443,21 @@ class Logics:
             cltv_expiry=hold_payment["cltv_expiry"],
         )
 
-        order.expires_at = timezone.now() + timedelta(
-            seconds=order.t_to_expire(Order.Status.TAK)
+        take_order.expires_at = timezone.now() + timedelta(
+            seconds=take_order.order.t_to_expire(Order.Status.TAK)
         )
-        order.save(
+        take_order.save(
             update_fields=[
                 "expires_at",
+                "last_satoshis",
                 "last_satoshis_time",
                 "taker_bond",
                 "expires_at",
             ]
         )
 
-        order.log(
-            f"Taker bond invoice LNPayment({hold_payment['payment_hash']},{str(order.taker_bond)}) was created"
+        take_order.order.log(
+            f"Taker bond invoice LNPayment({hold_payment['payment_hash']},{str(take_order.order.taker_bond)}) was created"
         )
 
         return True, {

@@ -407,24 +407,116 @@ class TradeTest(BaseAPITestCase):
         self.assertEqual(trade.response.status_code, 200)
         self.assertResponse(trade.response)
 
-        self.assertEqual(data["status_message"], Order.Status(Order.Status.TAK).label)
+        self.assertEqual(data["status_message"], Order.Status(Order.Status.PUB).label)
         self.assertEqual(
             data["ur_nick"], read_file(f"tests/robots/{trade.taker_index}/nickname")
         )
-        self.assertEqual(
-            data["taker_nick"], read_file(f"tests/robots/{trade.taker_index}/nickname")
-        )
+        self.assertEqual(data["taker_nick"], "None")
         self.assertEqual(
             data["maker_nick"], read_file(f"tests/robots/{trade.maker_index}/nickname")
         )
         self.assertIsHash(data["maker_hash_id"])
-        self.assertIsHash(data["taker_hash_id"])
         self.assertEqual(data["maker_status"], "Active")
-        self.assertEqual(data["taker_status"], "Active")
+        self.assertTrue(data["is_pretaker"])
         self.assertFalse(data["is_maker"])
         self.assertFalse(data["is_buyer"])
-        self.assertTrue(data["is_seller"])
-        self.assertTrue(data["is_taker"])
+        self.assertFalse(data["is_seller"])
+        self.assertFalse(data["is_taker"])
+        self.assertTrue(data["is_participant"])
+        self.assertTrue(data["maker_locked"])
+        self.assertFalse(data["taker_locked"])
+        self.assertFalse(data["escrow_locked"])
+
+        # Cancel order to avoid leaving pending HTLCs after a successful test
+        trade.cancel_order()
+
+        self.assert_order_logs(data["id"])
+
+    def test_make_and_take_multiple(self):
+        """
+        Tests a trade from order creation to taken.
+        """
+        trade = Trade(self.client)
+        trade.publish_order()
+
+        # Taker POST
+
+        trade.take_order()
+        data = trade.response.json()
+
+        self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+
+        self.assertEqual(data["status_message"], Order.Status(Order.Status.PUB).label)
+        self.assertEqual(
+            data["ur_nick"], read_file(f"tests/robots/{trade.taker_index}/nickname")
+        )
+        self.assertEqual(data["taker_nick"], "None")
+        self.assertEqual(
+            data["maker_nick"], read_file(f"tests/robots/{trade.maker_index}/nickname")
+        )
+        self.assertIsHash(data["maker_hash_id"])
+        self.assertEqual(data["maker_status"], "Active")
+        self.assertTrue(data["is_pretaker"])
+        self.assertFalse(data["is_maker"])
+        self.assertFalse(data["is_buyer"])
+        self.assertFalse(data["is_seller"])
+        self.assertFalse(data["is_taker"])
+        self.assertTrue(data["is_participant"])
+        self.assertTrue(data["maker_locked"])
+        self.assertFalse(data["taker_locked"])
+        self.assertFalse(data["escrow_locked"])
+
+        # Third POST
+        trade.take_order_third()
+
+        data = trade.response.json()
+
+        self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+
+        self.assertEqual(data["status_message"], Order.Status(Order.Status.PUB).label)
+        self.assertEqual(
+            data["ur_nick"], read_file(f"tests/robots/{trade.third_index}/nickname")
+        )
+        self.assertEqual(data["taker_nick"], "None")
+        self.assertEqual(
+            data["maker_nick"], read_file(f"tests/robots/{trade.maker_index}/nickname")
+        )
+        self.assertIsHash(data["maker_hash_id"])
+        self.assertEqual(data["maker_status"], "Active")
+        self.assertTrue(data["is_pretaker"])
+        self.assertFalse(data["is_maker"])
+        self.assertFalse(data["is_buyer"])
+        self.assertFalse(data["is_seller"])
+        self.assertFalse(data["is_taker"])
+        self.assertTrue(data["is_participant"])
+        self.assertTrue(data["maker_locked"])
+        self.assertFalse(data["taker_locked"])
+        self.assertFalse(data["escrow_locked"])
+
+        # Taker GET
+        trade.get_order(trade.taker_index)
+        data = trade.response.json()
+
+        self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+
+        self.assertEqual(data["status_message"], Order.Status(Order.Status.PUB).label)
+        self.assertEqual(
+            data["ur_nick"], read_file(f"tests/robots/{trade.taker_index}/nickname")
+        )
+        self.assertEqual(data["taker_nick"], "None")
+        self.assertEqual(
+            data["maker_nick"], read_file(f"tests/robots/{trade.maker_index}/nickname")
+        )
+        self.assertIsHash(data["maker_hash_id"])
+        self.assertEqual(data["maker_status"], "Active")
+        self.assertTrue(data["is_pretaker"])
+        self.assertFalse(data["is_maker"])
+        self.assertFalse(data["is_buyer"])
+        self.assertFalse(data["is_seller"])
+        self.assertFalse(data["is_taker"])
         self.assertTrue(data["is_participant"])
         self.assertTrue(data["maker_locked"])
         self.assertFalse(data["taker_locked"])
@@ -441,6 +533,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
 
@@ -450,8 +543,24 @@ class TradeTest(BaseAPITestCase):
         self.assertResponse(trade.response)
 
         self.assertEqual(data["status_message"], Order.Status(Order.Status.WF2).label)
+        self.assertEqual(
+            data["ur_nick"], read_file(f"tests/robots/{trade.taker_index}/nickname")
+        )
+        self.assertEqual(
+            data["taker_nick"], read_file(f"tests/robots/{trade.taker_index}/nickname")
+        )
+        self.assertEqual(
+            data["maker_nick"], read_file(f"tests/robots/{trade.maker_index}/nickname")
+        )
+        self.assertIsHash(data["maker_hash_id"])
+        self.assertIsHash(data["taker_hash_id"])
         self.assertEqual(data["maker_status"], "Active")
         self.assertEqual(data["taker_status"], "Active")
+        self.assertFalse(data["is_pretaker"])
+        self.assertFalse(data["is_maker"])
+        self.assertFalse(data["is_buyer"])
+        self.assertTrue(data["is_seller"])
+        self.assertTrue(data["is_taker"])
         self.assertTrue(data["is_participant"])
         self.assertTrue(data["maker_locked"])
         self.assertTrue(data["taker_locked"])
@@ -477,6 +586,36 @@ class TradeTest(BaseAPITestCase):
         self.assertTrue(data["taker_locked"])
         self.assertFalse(data["escrow_locked"])
 
+        # Taker GET
+        trade.get_order(trade.taker_index)
+        data = trade.response.json()
+
+        self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+
+        self.assertEqual(data["status_message"], Order.Status(Order.Status.WF2).label)
+        self.assertEqual(data["maker_status"], "Active")
+        self.assertEqual(data["taker_status"], "Active")
+        self.assertTrue(data["is_participant"])
+        self.assertTrue(data["maker_locked"])
+        self.assertTrue(data["taker_locked"])
+        self.assertFalse(data["escrow_locked"])
+
+        # Third GET
+        trade.get_order(trade.third_index)
+        data = trade.response.json()
+
+        self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+
+        self.assertEqual(data["status_message"], Order.Status(Order.Status.WF2).label)
+        self.assertEqual(data["maker_status"], "Active")
+        self.assertEqual(data["taker_status"], "Active")
+        self.assertTrue(data["is_participant"])
+        self.assertTrue(data["maker_locked"])
+        self.assertTrue(data["taker_locked"])
+        self.assertFalse(data["escrow_locked"])
+
         # Maker cancels order to avoid leaving pending HTLCs after a successful test
         trade.cancel_order()
 
@@ -489,6 +628,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -513,6 +653,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -558,6 +699,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -602,6 +744,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -634,6 +777,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -680,6 +824,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -890,6 +1035,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
 
@@ -899,7 +1045,46 @@ class TradeTest(BaseAPITestCase):
         # Make orders expire
         trade.clean_orders()
 
-        trade.get_order()
+        # Maker GET
+        trade.get_order(trade.maker_index)
+        data = trade.response.json()
+
+        self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+
+        self.assertEqual(
+            data["status"],
+            Order.Status.EXP,
+        )
+        self.assertEqual(
+            data["expiry_message"],
+            Order.ExpiryReasons(Order.ExpiryReasons.NESINV).label,
+        )
+        self.assertEqual(data["expiry_reason"], Order.ExpiryReasons.NESINV)
+
+        self.assert_order_logs(data["id"])
+
+        # Taker GET
+        trade.get_order(trade.taker_index)
+        data = trade.response.json()
+
+        self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+
+        self.assertEqual(
+            data["status"],
+            Order.Status.EXP,
+        )
+        self.assertEqual(
+            data["expiry_message"],
+            Order.ExpiryReasons(Order.ExpiryReasons.NESINV).label,
+        )
+        self.assertEqual(data["expiry_reason"], Order.ExpiryReasons.NESINV)
+
+        self.assert_order_logs(data["id"])
+
+        # Third GET
+        trade.get_order(trade.third_index)
         data = trade.response.json()
 
         self.assertEqual(trade.response.status_code, 200)
@@ -923,6 +1108,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -965,6 +1151,7 @@ class TradeTest(BaseAPITestCase):
         # Run a successful trade
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -1197,6 +1384,7 @@ class TradeTest(BaseAPITestCase):
     def test_lightning_payment_failed(self):
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -1223,6 +1411,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.cancel_order(trade.maker_index)
@@ -1260,6 +1449,7 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.lock_escrow(trade.taker_index)
@@ -1316,6 +1506,7 @@ class TradeTest(BaseAPITestCase):
         # Make a contract and cancel
         trade = Trade(self.client)
         trade.publish_order()
+        trade.take_order_third()
         trade.take_order()
         trade.lock_taker_bond()
         trade.cancel_order()

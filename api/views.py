@@ -23,6 +23,7 @@ from api.models import (
     OnchainPayment,
     Order,
     Notification,
+    TakeOrder,
 )
 from api.notifications import Notifications
 from api.oas_schemas import (
@@ -242,10 +243,17 @@ class OrderView(viewsets.ViewSet):
         if is_penalized:
             data["penalty"] = request.user.robot.penalty_expiration
 
+        take_order_queryset = TakeOrder.objects.filter(
+            order_id=order_id, taker=request.user
+        )
+
         # Add booleans if user is maker, taker, partipant, buyer or seller
         data["is_maker"] = order.maker == request.user
+        data["is_pretaker"] = take_order_queryset.exists()
         data["is_taker"] = order.taker == request.user
-        data["is_participant"] = data["is_maker"] or data["is_taker"]
+        data["is_participant"] = (
+            data["is_maker"] or data["is_taker"] or data["is_pretaker"]
+        )
 
         # 3.a) If not a participant and order is not public, forbid.
         if not data["is_participant"] and order.status != Order.Status.PUB:
@@ -355,9 +363,11 @@ class OrderView(viewsets.ViewSet):
             else:
                 return Response(context, status.HTTP_400_BAD_REQUEST)
 
-        # 6)  If status is 'waiting for taker bond' and user is TAKER, reply with a TAKER hold invoice.
-        elif order.status == Order.Status.TAK and data["is_taker"]:
-            valid, context = Logics.gen_taker_hold_invoice(order, request.user)
+        # 6)  If user has a TakeOrder created but is not a taker yet, reply with a TAKER hold invoice.
+        elif data["is_pretaker"] and not data["is_taker"]:
+            valid, context = Logics.gen_taker_hold_invoice(
+                take_order_queryset.last(), request.user
+            )
             if valid:
                 data = {**data, **context}
             else:
