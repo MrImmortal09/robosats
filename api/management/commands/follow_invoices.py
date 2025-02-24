@@ -283,7 +283,7 @@ class Command(BaseCommand):
 
             elif take_order_query.exists():
                 take_order = take_order_query.last()
-                Logics.take_order_expires(take_order)
+                Logics.expire_take_order(take_order)
                 return
 
         # TODO If a lnpayment goes from LOCKED to INVGEN. Totally weird

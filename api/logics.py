@@ -73,7 +73,7 @@ class Logics:
         queryset_take_order = TakeOrder.objects.filter(
             taker=user, expires_at__gt=timezone.now()
         )
-        if not queryset_take_order.exists():
+        if queryset_take_order.exists():
             return (
                 False,
                 {"bad_request": "You are already taker of an active order"},
@@ -254,17 +254,13 @@ class Logics:
         return price, premium
 
     @classmethod
-    def take_order_expires(cls, take_order):
-        """General case when taker time runs out."""
-        if take_order.expires_at < timezone.now():
-            cls.cancel_bond(take_order.taker_bond)
-
-            take_order.order.log("Take order expired while waiting for taker bond")
-            take_order.order.log("Taker bond was cancelled")
-
-            return True
-        else:
-            return False
+    def expire_take_order(cls, take_order):
+        """General function to cancel pretakers"""
+        cls.cancel_bond(take_order.taker_bond)
+        take_order.update(expires_at=timezone.now())
+        take_order.order.log(
+            f"Taker bond from {take_order.taker.username} was <b>cancelled</b>"
+        )
 
     @classmethod
     def order_expires(cls, order):
@@ -1040,10 +1036,7 @@ class Logics:
                     order=order, expires_at__gt=timezone.now()
                 )
                 for idx, take_order in enumerate(queryset):
-                    cls.cancel_bond(take_order.taker_bond)
-                    order.log(
-                        f"Taker bond from {take_order.taker.username} was <b>cancelled</b>"
-                    )
+                    cls.expire_take_order(take_order)
 
                 order.update_status(Order.Status.UCA)
                 send_notification.delay(
@@ -1161,8 +1154,7 @@ class Logics:
         # LNPayment "order.taker_bond" is deleted()
         elif take_order_query_set.exists():
             take_order = take_order_query_set.first()
-            cls.cancel_bond(take_order.taker_bond)
-            take_order.update(expires_at=timezone.now())
+            cls.expire_take_order(take_order)
             order.log("Taker cancelled before locking the bond")
 
             return True, None
@@ -1375,7 +1367,7 @@ class Logics:
         queryset = TakeOrder.objects.filter(order=order, expires_at__gt=timezone.now())
         for idx, take_order in enumerate(queryset):
             if take_order.id is not take_order.id:
-                cls.cancel_bond(take_order.taker_bond)
+                cls.expire_take_order(take_order)
                 order.log(
                     f"Taker bond from {take_order.taker.username} was <b>cancelled</b>"
                 )
@@ -1385,7 +1377,7 @@ class Logics:
     @classmethod
     def gen_taker_hold_invoice(cls, take_order, user):
         # Do not gen and kick out the taker if order is older than expiry time
-        expired = cls.take_order_expires(take_order)
+        expired = cls.order_expires(take_order.order)
         if expired:
             return False, {
                 "bad_request": "Invoice expired. You did not confirm taking the order in time."

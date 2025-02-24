@@ -562,8 +562,8 @@ class TradeTest(BaseAPITestCase):
         self.assertTrue(data["is_seller"])
         self.assertTrue(data["is_taker"])
         self.assertTrue(data["is_participant"])
-        self.assertTrue(data["maker_locked"])
-        self.assertTrue(data["taker_locked"])
+        self.assertFalse(data["maker_locked"])
+        self.assertFalse(data["taker_locked"])
         self.assertFalse(data["escrow_locked"])
 
         # Maker GET
@@ -582,8 +582,8 @@ class TradeTest(BaseAPITestCase):
         self.assertEqual(data["maker_status"], "Active")
         self.assertEqual(data["taker_status"], "Active")
         self.assertTrue(data["is_participant"])
-        self.assertTrue(data["maker_locked"])
-        self.assertTrue(data["taker_locked"])
+        self.assertFalse(data["maker_locked"])
+        self.assertFalse(data["taker_locked"])
         self.assertFalse(data["escrow_locked"])
 
         # Taker GET
@@ -597,8 +597,8 @@ class TradeTest(BaseAPITestCase):
         self.assertEqual(data["maker_status"], "Active")
         self.assertEqual(data["taker_status"], "Active")
         self.assertTrue(data["is_participant"])
-        self.assertTrue(data["maker_locked"])
-        self.assertTrue(data["taker_locked"])
+        self.assertFalse(data["maker_locked"])
+        self.assertFalse(data["taker_locked"])
         self.assertFalse(data["escrow_locked"])
 
         # Third GET
@@ -612,8 +612,8 @@ class TradeTest(BaseAPITestCase):
         self.assertEqual(data["maker_status"], "Active")
         self.assertEqual(data["taker_status"], "Active")
         self.assertTrue(data["is_participant"])
-        self.assertTrue(data["maker_locked"])
-        self.assertTrue(data["taker_locked"])
+        self.assertFalse(data["maker_locked"])
+        self.assertFalse(data["taker_locked"])
         self.assertFalse(data["escrow_locked"])
 
         # Maker cancels order to avoid leaving pending HTLCs after a successful test

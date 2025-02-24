@@ -249,8 +249,8 @@ class OrderView(viewsets.ViewSet):
 
         # Add booleans if user is maker, taker, partipant, buyer or seller
         data["is_maker"] = order.maker == request.user
-        data["is_pretaker"] = take_order_queryset.exists()
         data["is_taker"] = order.taker == request.user
+        data["is_pretaker"] = take_order_queryset.exists() and not data["is_taker"]
         data["is_participant"] = (
             data["is_maker"] or data["is_taker"] or data["is_pretaker"]
         )

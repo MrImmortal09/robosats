@@ -73,10 +73,9 @@ class Command(BaseCommand):
             # Dont't cancel bonds that made through the order and became taker bonds
             if take_order.order.taker_bond is not take_order.taker_bond:
                 try:
-                    if Logics.take_order_expires(
-                        take_order
-                    ):  # Take order send to expire here
-                        debug["expired_take_orders"].append({idx: context})
+                    Logics.expire_take_order(take_order)
+                    # Take order send to expire here
+                    debug["expired_take_orders"].append({idx: context})
 
                 # It should not happen, but if it cannot locate the hold invoice
                 # it probably was cancelled by another thread, try to remove it anyways
