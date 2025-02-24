@@ -70,22 +70,23 @@ class Command(BaseCommand):
 
         for idx, take_order in enumerate(take_order_queryset):
             context = str(take_order.id)
-            try:
-                if Logics.take_order_expires(
-                    take_order
-                ):  # Take order send to expire here
-                    debug["expired_take_orders"].append({idx: context})
+            # Dont't cancel bonds that made through the order and became taker bonds
+            if take_order.order.taker_bond is not take_order.taker_bond:
+                try:
+                    if Logics.take_order_expires(
+                        take_order
+                    ):  # Take order send to expire here
+                        debug["expired_take_orders"].append({idx: context})
 
-            # It should not happen, but if it cannot locate the hold invoice
-            # it probably was cancelled by another thread, try to remove it anyways
-            except Exception as e:
-                debug["failed_take_order_expiry"].append({idx: context})
-                debug["reason_take_failure"].append({idx: str(e)})
+                # It should not happen, but if it cannot locate the hold invoice
+                # it probably was cancelled by another thread, try to remove it anyways
+                except Exception as e:
+                    debug["failed_take_order_expiry"].append({idx: context})
+                    debug["reason_take_failure"].append({idx: str(e)})
 
-                if "unable to locate invoice" in str(e):
-                    self.stdout.write(str(e))
-                    take_order.delete()
-                    debug["expired_take_orders"].append({idx: context})
+                    if "unable to locate invoice" in str(e):
+                        self.stdout.write(str(e))
+                        debug["expired_take_orders"].append({idx: context})
 
         if debug["num_expired_take_orders"] > 0:
             self.stdout.write(str(timezone.now()))

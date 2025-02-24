@@ -243,7 +243,7 @@ class Command(BaseCommand):
 
                 # It is a taker bond => close contract.
                 elif take_order_query.exists():
-                    take_order = take_order_query.last()
+                    take_order = take_order_query.first()
                     take_order.order.log("Taker bond <b>locked</b>")
                     Logics.finalize_contract(take_order)
                     return

@@ -70,7 +70,9 @@ class Logics:
                 queryset_taker[0],
             )
 
-        queryset_take_order = TakeOrder.objects.filter(taker=user)
+        queryset_take_order = TakeOrder.objects.filter(
+            taker=user, expires_at__gt=timezone.now()
+        )
         if not queryset_take_order.exists():
             return (
                 False,
@@ -271,6 +273,7 @@ class Logics:
         # Do not change order status if an order in any with
         # any of these status is sent to expire here
         does_not_expire = [
+            Order.Status.UCA,
             Order.Status.EXP,
             Order.Status.TLD,
             Order.Status.DIS,
@@ -1002,7 +1005,9 @@ class Logics:
             Order.Status.MLD,
         ]
 
-        take_order_query_set = TakeOrder.objects.filter(taker=user, order=order)
+        take_order_query_set = TakeOrder.objects.filter(
+            taker=user, order=order, expires_at__gt=timezone.now()
+        )
 
         if order.status in do_not_cancel:
             return False, {"bad_request": "You cannot cancel this order"}
@@ -1031,7 +1036,9 @@ class Logics:
         ):
             # Return the maker bond (Maker gets returned the bond for cancelling public order)
             if cls.return_bond(order.maker_bond):
-                queryset = TakeOrder.objects.filter(order=order)
+                queryset = TakeOrder.objects.filter(
+                    order=order, expires_at__gt=timezone.now()
+                )
                 for idx, take_order in enumerate(queryset):
                     cls.cancel_bond(take_order.taker_bond)
                     order.log(
@@ -1155,8 +1162,7 @@ class Logics:
         elif take_order_query_set.exists():
             take_order = take_order_query_set.first()
             cls.cancel_bond(take_order.taker_bond)
-            take_order.delete()
-
+            take_order.update(expires_at=timezone.now())
             order.log("Taker cancelled before locking the bond")
 
             return True, None
@@ -1366,7 +1372,7 @@ class Logics:
             f"<b>Contract formalized.</b> Maker: Robot({order.maker.robot.id},{order.maker}). Taker: Robot({order.taker.robot.id},{order.taker}). API median price {order.currency.exchange_rate} {dict(Currency.currency_choices)[order.currency.currency]}/BTC. Premium is {order.premium}%. Contract size {order.last_satoshis} Sats"
         )
 
-        queryset = TakeOrder.objects.filter(order=order)
+        queryset = TakeOrder.objects.filter(order=order, expires_at__gt=timezone.now())
         for idx, take_order in enumerate(queryset):
             if take_order.id is not take_order.id:
                 cls.cancel_bond(take_order.taker_bond)

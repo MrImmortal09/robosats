@@ -244,7 +244,7 @@ class OrderView(viewsets.ViewSet):
             data["penalty"] = request.user.robot.penalty_expiration
 
         take_order_queryset = TakeOrder.objects.filter(
-            order_id=order_id, taker=request.user
+            order_id=order_id, taker=request.user, expires_at__gt=timezone.now()
         )
 
         # Add booleans if user is maker, taker, partipant, buyer or seller
