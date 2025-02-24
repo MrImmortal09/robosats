@@ -4,7 +4,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from api.logics import Logics
-from api.models import Order, TakeOrder
+from api.models import Order
 
 
 class Command(BaseCommand):
@@ -27,18 +27,18 @@ class Command(BaseCommand):
         """Continuously checks order expiration times. If order
         has expires, it calls the logics module for expiration handling."""
 
-        order_queryset = Order.objects.exclude(status__in=self.do_nothing)
-        order_queryset = order_queryset.filter(
+        queryset = Order.objects.exclude(status__in=self.do_nothing)
+        queryset = queryset.filter(
             expires_at__lt=timezone.now()
         )  # expires at lower than now
 
         debug = {}
-        debug["num_expired_orders"] = len(order_queryset)
+        debug["num_expired_orders"] = len(queryset)
         debug["expired_orders"] = []
         debug["failed_order_expiry"] = []
-        debug["reason_order_failure"] = []
+        debug["reason_failure"] = []
 
-        for idx, order in enumerate(order_queryset):
+        for idx, order in enumerate(queryset):
             context = str(order) + " was " + Order.Status(order.status).label
             try:
                 if Logics.order_expires(order):  # Order send to expire here
@@ -48,7 +48,7 @@ class Command(BaseCommand):
             # it probably was cancelled by another thread, make it expire anyway.
             except Exception as e:
                 debug["failed_order_expiry"].append({idx: context})
-                debug["reason_order_failure"].append({idx: str(e)})
+                debug["reason_failure"].append({idx: str(e)})
 
                 if "unable to locate invoice" in str(e):
                     self.stdout.write(str(e))
@@ -56,38 +56,6 @@ class Command(BaseCommand):
                     debug["expired_orders"].append({idx: context})
 
         if debug["num_expired_orders"] > 0:
-            self.stdout.write(str(timezone.now()))
-            self.stdout.write(str(debug))
-
-        take_order_queryset = TakeOrder.objects.filter(
-            expires_at__lt=timezone.now()
-        )  # expires at lower than now
-
-        debug["num_expired_take_orders"] = len(take_order_queryset)
-        debug["expired_take_orders"] = []
-        debug["failed_take_order_expiry"] = []
-        debug["reason_take_failure"] = []
-
-        for idx, take_order in enumerate(take_order_queryset):
-            context = str(take_order.id)
-            # Dont't cancel bonds that made through the order and became taker bonds
-            if take_order.order.taker_bond is not take_order.taker_bond:
-                try:
-                    Logics.expire_take_order(take_order)
-                    # Take order send to expire here
-                    debug["expired_take_orders"].append({idx: context})
-
-                # It should not happen, but if it cannot locate the hold invoice
-                # it probably was cancelled by another thread, try to remove it anyways
-                except Exception as e:
-                    debug["failed_take_order_expiry"].append({idx: context})
-                    debug["reason_take_failure"].append({idx: str(e)})
-
-                    if "unable to locate invoice" in str(e):
-                        self.stdout.write(str(e))
-                        debug["expired_take_orders"].append({idx: context})
-
-        if debug["num_expired_take_orders"] > 0:
             self.stdout.write(str(timezone.now()))
             self.stdout.write(str(debug))
 

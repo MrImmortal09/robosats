@@ -7,7 +7,7 @@ from django.utils import timezone
 
 from api.lightning.node import LNNode
 from api.logics import Logics
-from api.models import LNPayment, OnchainPayment, TakeOrder
+from api.models import LNPayment, OnchainPayment, Order
 from api.tasks import follow_send_payment, send_notification
 
 
@@ -221,7 +221,6 @@ class Command(BaseCommand):
         """Background process following LND hold invoices
         can catch LNpayments changing status. If they do,
         the order status might have to change too."""
-        take_order_query = TakeOrder.objects.filter(taker_bond=lnpayment)
 
         # If the LNPayment goes to LOCKED (ACCEPTED)
         if lnpayment.status == LNPayment.Status.LOCKED:
@@ -235,17 +234,17 @@ class Command(BaseCommand):
                     )
                     return
 
+                # It is a taker bond => close contract.
+                elif hasattr(lnpayment, "order_taken"):
+                    if lnpayment.order_taken.status == Order.Status.TAK:
+                        lnpayment.order_taken.log("Taker bond <b>locked</b>")
+                        Logics.finalize_contract(lnpayment.order_taken)
+                        return
+
                 # It is a trade escrow => move foward order status.
                 elif hasattr(lnpayment, "order_escrow"):
                     lnpayment.order_escrow.log("Trade escrow <b>locked</b>")
                     Logics.trade_escrow_received(lnpayment.order_escrow)
-                    return
-
-                # It is a taker bond => close contract.
-                elif take_order_query.exists():
-                    take_order = take_order_query.first()
-                    take_order.order.log("Taker bond <b>locked</b>")
-                    Logics.finalize_contract(take_order)
                     return
 
                 # A locked invoice that has no order attached is an inconsistency (must be due to internal error).
@@ -279,11 +278,6 @@ class Command(BaseCommand):
 
             elif hasattr(lnpayment, "order_escrow"):
                 Logics.order_expires(lnpayment.order_escrow)
-                return
-
-            elif take_order_query.exists():
-                take_order = take_order_query.last()
-                Logics.expire_take_order(take_order)
                 return
 
         # TODO If a lnpayment goes from LOCKED to INVGEN. Totally weird
