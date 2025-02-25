@@ -219,6 +219,11 @@ class Trade:
         self.get_order()
 
     @patch("api.tasks.send_notification.delay", send_notification)
+    def pay_invoice(self, invoice):
+        # Lock the invoice from the robot's node
+        pay_invoice("robot", invoice)
+
+    @patch("api.tasks.send_notification.delay", send_notification)
     def submit_payout_address(self, robot_index=1):
         path = reverse("order")
         params = f"?order_id={self.order_id}"
