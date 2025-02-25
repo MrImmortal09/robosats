@@ -1,5 +1,4 @@
 import math
-import sys
 from datetime import timedelta
 
 from decouple import config, Csv
@@ -1009,8 +1008,6 @@ class Logics:
 
     @classmethod
     def cancel_order(cls, order, user, state=None):
-        sys.stdout.write("run cancel_order")
-        sys.stdout.write(str(order.status))
         # Do not change order status if an is in order
         # any of these status
         do_not_cancel = [
@@ -1050,7 +1047,6 @@ class Logics:
         elif (
             order.status in [Order.Status.PUB, Order.Status.PAU] and order.maker == user
         ):
-            sys.stdout.write("RETURN")
             # Return the maker bond (Maker gets returned the bond for cancelling public order)
             if cls.return_bond(order.maker_bond):
                 order.update_status(Order.Status.UCA)
@@ -1063,8 +1059,6 @@ class Logics:
                     order.log("Pretaker bond was <b>unlocked</b>")
                     take_order.cancel(cls)
 
-                sys.stdout.write("send_notification")
-                sys.stdout.write(order.id)
                 send_notification.delay(
                     order_id=order.id, message="public_order_cancelled"
                 )
