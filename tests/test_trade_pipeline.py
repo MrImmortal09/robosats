@@ -903,18 +903,23 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
-        trade.take_order()
 
+        trade.take_order()
+        data = trade.response.json()
         self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+        self.assertTrue(data["is_pretaker"])
+        self.assertFalse(data["is_taker"])
 
         trade.cancel_order(trade.taker_index)
-
         data = trade.response.json()
         self.assertEqual(data["bad_request"], "You are not a participant in this order")
 
-        trade.get_order()
-
+        trade.get_order(trade.maker_index)
+        data = trade.response.json()
         self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+        self.assertTrue(data["is_maker"])
 
     def test_cancel_public_order_by_third(self):
         """
@@ -924,11 +929,16 @@ class TradeTest(BaseAPITestCase):
         trade.publish_order()
         trade.take_order()
 
+        data = trade.response.json()
         self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+        self.assertTrue(data["is_pretaker"])
 
         trade.take_order_third()
-
+        data = trade.response.json()
         self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
+        self.assertTrue(data["is_pretaker"])
 
         trade.cancel_order(trade.third_index)
 
@@ -938,11 +948,13 @@ class TradeTest(BaseAPITestCase):
         trade.get_order(trade.maker_index)
         data = trade.response.json()
         self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
         self.assertTrue(data["is_maker"])
 
         trade.get_order(trade.taker_index)
         data = trade.response.json()
         self.assertEqual(trade.response.status_code, 200)
+        self.assertResponse(trade.response)
         self.assertFalse(data["is_participant"])
         self.assertTrue(data["is_pretaker"])
         self.assertFalse(data["is_taker"])
