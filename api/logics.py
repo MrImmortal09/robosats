@@ -1,4 +1,5 @@
 import math
+import sys
 from datetime import timedelta
 
 from decouple import config, Csv
@@ -305,7 +306,7 @@ class Logics:
 
             take_orders_queryset = TakeOrder.objects.filter(order=order)
             for idx, take_order in enumerate(take_orders_queryset):
-                take_order.cancel()
+                take_order.cancel(cls)
 
             order.save(update_fields=["expiry_reason"])
 
@@ -429,7 +430,7 @@ class Logics:
     @classmethod
     def kick_taker(cls, take_order):
         """The taker did not lock the taker_bond. Now he has to go"""
-        take_order.cancel()
+        take_order.cancel(cls)
         # Add a time out to the taker
         if take_order.taker:
             robot = take_order.taker.robot
@@ -1008,6 +1009,8 @@ class Logics:
 
     @classmethod
     def cancel_order(cls, order, user, state=None):
+        sys.stdout.write("run cancel_order")
+        sys.stdout.write(str(order.status))
         # Do not change order status if an is in order
         # any of these status
         do_not_cancel = [
@@ -1047,12 +1050,10 @@ class Logics:
         elif (
             order.status in [Order.Status.PUB, Order.Status.PAU] and order.maker == user
         ):
+            sys.stdout.write("RETURN")
             # Return the maker bond (Maker gets returned the bond for cancelling public order)
             if cls.return_bond(order.maker_bond):
                 order.update_status(Order.Status.UCA)
-                send_notification.delay(
-                    order_id=order.id, message="public_order_cancelled"
-                )
 
                 order.log("Order cancelled by maker while public or paused")
                 order.log("Maker bond was <b>unlocked</b>")
@@ -1060,8 +1061,13 @@ class Logics:
                 take_orders_queryset = TakeOrder.objects.filter(order=order)
                 for idx, take_order in enumerate(take_orders_queryset):
                     order.log("Pretaker bond was <b>unlocked</b>")
-                    take_order.cancel()
+                    take_order.cancel(cls)
 
+                sys.stdout.write("send_notification")
+                sys.stdout.write(order.id)
+                send_notification.delay(
+                    order_id=order.id, message="public_order_cancelled"
+                )
                 nostr_send_order_event.delay(order_id=order.id)
 
                 return True, None
@@ -1386,16 +1392,16 @@ class Logics:
 
     @classmethod
     def gen_taker_hold_invoice(cls, order, user):
+        take_order = TakeOrder.objects.filter(
+            taker=user, order=order, expires_at__gt=timezone.now()
+        ).first()
+
         # Do not gen and kick out the taker if order is older than expiry time
-        if order.expires_at < timezone.now():
+        if order.expires_at < timezone.now() or take_order.expires_at < timezone.now():
             cls.order_expires(order)
             return False, {
                 "bad_request": "Order expired. You did not confirm taking the order in time."
             }
-
-        take_order = TakeOrder.objects.filter(
-            taker=user, order=order, expires_at__gt=timezone.now()
-        ).first()
 
         # Do not gen if a taker invoice exist. Do not return if it is already locked. Return the old one if still waiting.
         if take_order.taker_bond:

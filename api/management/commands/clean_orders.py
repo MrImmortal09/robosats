@@ -49,7 +49,8 @@ class Command(BaseCommand):
                         order=order, expires_at__gt=timezone.now()
                     )
                     for idx, take_order in enumerate(take_orders_queryset):
-                        take_order.update(expires_at=order.expires_at)
+                        take_order.expires_at = order.expires_at
+                        take_order.save()
                         Logics.take_order_expires(take_order)
 
             # It should not happen, but if it cannot locate the hold invoice
@@ -63,9 +64,9 @@ class Command(BaseCommand):
                     order.update_status(Order.Status.EXP)
                     debug["expired_orders"].append({idx: context})
 
-        if debug["num_expired_orders"] > 0:
-            self.stdout.write(str(timezone.now()))
-            self.stdout.write(str(debug))
+        # if debug["num_expired_orders"] > 0:
+        #     self.stdout.write(str(timezone.now()))
+        #     self.stdout.write(str(debug))
 
         take_orders_queryset = TakeOrder.objects.filter(expires_at__lt=timezone.now())
         debug["num_expired_take_orders"] = len(take_orders_queryset)
@@ -91,9 +92,9 @@ class Command(BaseCommand):
                     self.stdout.write(str(e))
                     debug["expired_take_orders"].append({idx: context})
 
-        if debug["num_expired_take_orders"] > 0:
-            self.stdout.write(str(timezone.now()))
-            self.stdout.write(str(debug))
+        # if debug["num_expired_take_orders"] > 0:
+        #     self.stdout.write(str(timezone.now()))
+        #     self.stdout.write(str(debug))
 
     def handle(self, *args, **options):
         """Never mind database locked error, keep going, print them out.

@@ -126,9 +126,9 @@ class Command(BaseCommand):
 
         debug["time"] = time.time() - t0
 
-        if at_least_one_changed:
-            self.stdout.write(str(timezone.now()))
-            self.stdout.write(str(debug))
+        # if at_least_one_changed:
+        #     self.stdout.write(str(timezone.now()))
+        #     self.stdout.write(str(debug))
 
     def send_payments(self):
         """

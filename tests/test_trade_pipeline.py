@@ -735,7 +735,9 @@ class TradeTest(BaseAPITestCase):
         """
         trade = Trade(self.client)
         trade.publish_order()
+        print(trade.response.json())
         trade.cancel_order()
+        print(trade.response.json())
 
         data = trade.response.json()
 
