@@ -23,6 +23,7 @@ from api.models import (
     OnchainPayment,
     Order,
     Notification,
+    TakeOrder,
 )
 from api.notifications import Notifications
 from api.oas_schemas import (
@@ -245,6 +246,9 @@ class OrderView(viewsets.ViewSet):
         # Add booleans if user is maker, taker, partipant, buyer or seller
         data["is_maker"] = order.maker == request.user
         data["is_taker"] = order.taker == request.user
+        data["is_pretaker"] = TakeOrder.objects.filter(
+            taker=request.user, order=order, expires_at__gt=timezone.now()
+        ).exists()
         data["is_participant"] = data["is_maker"] or data["is_taker"]
 
         # 3.a) If not a participant and order is not public, forbid.
@@ -263,7 +267,11 @@ class OrderView(viewsets.ViewSet):
             data["taker_status"] = Logics.user_activity_status(order.taker.last_login)
 
         # 3.b) Non participants can view details (but only if PUB)
-        if not data["is_participant"] and order.status == Order.Status.PUB:
+        if (
+            not data["is_participant"]
+            and not data["is_pretaker"]
+            and order.status == Order.Status.PUB
+        ):
             data["price_now"], data["premium_now"] = Logics.price_and_premium_now(order)
             data["satoshis_now"] = Logics.satoshis_now(order)
             return Response(data, status=status.HTTP_200_OK)
@@ -355,8 +363,12 @@ class OrderView(viewsets.ViewSet):
             else:
                 return Response(context, status.HTTP_400_BAD_REQUEST)
 
-        # 6)  If status is 'waiting for taker bond' and user is TAKER, reply with a TAKER hold invoice.
-        elif order.status == Order.Status.TAK and data["is_taker"]:
+        # 6)  If status is 'Public' and user is PRETAKER, reply with a TAKER hold invoice.
+        elif (
+            order.status == Order.Status.PUB
+            and data["is_pretaker"]
+            and not data["is_taker"]
+        ):
             valid, context = Logics.gen_taker_hold_invoice(order, request.user)
             if valid:
                 data = {**data, **context}
