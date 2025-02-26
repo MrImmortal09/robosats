@@ -77,7 +77,7 @@ class Logics:
             return (
                 False,
                 {"bad_request": "You are already taking an active order"},
-                queryset_pretaker[0],
+                queryset_pretaker[0].order,
             )
 
         # Edge case when the user is in an order that is failing payment and he is the buyer
