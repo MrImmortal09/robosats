@@ -61,6 +61,11 @@ Run tests:
 docker exec -it test-coordinator coverage run manage.py test
 ```
 
+If you want to run tests with CLN:
+```
+LNVENDOR='CLN'
+```
+
 ## All set!
 
 Commands you will need to startup:
