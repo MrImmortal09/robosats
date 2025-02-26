@@ -51,7 +51,7 @@ Copy the `.env-sample` file into `.env` and check the environmental variables ar
 
 ## Running tests
 
-Build an run conainer with the test specific configuration:
+Build and run containers with the test specific configuration:
 ```
 docker compose -f docker-tests.yml --env-file ./tests/compose.env up -d
 ```
